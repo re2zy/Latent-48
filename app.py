@@ -795,21 +795,21 @@ elif st.session_state.portal_view == "admin":
     render_navbar(active_tab="home")
 
     # Admin sub-nav
-    nav_cols = st.columns([1, 1.2, 1.2, 1.2, 1.2, 1.4])
+    nav_cols = st.columns([0.8, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
     with nav_cols[0]:
         if st.button("← Logout", use_container_width=True, key="a_back"):
             st.session_state.is_admin_logged_in = False
             st.session_state.portal_view = "gateway"
             st.rerun()
     tabs_map = {"queue": "📋 Ranked Queue", "map": "🗺️ Campus Map",
-                "sensors": "📹 Sensors", "export": "📦 Export"}
+                "sensors": "📹 Sensors", "video": "🎞️ Vlog Analysis", "export": "📦 Export"}
     for i, (k, label) in enumerate(tabs_map.items()):
         with nav_cols[i + 1]:
             if st.button(label, use_container_width=True, key=f"an_{k}",
                           type="primary" if st.session_state.admin_tab == k else "secondary"):
                 st.session_state.admin_tab = k
                 st.rerun()
-    with nav_cols[5]:
+    with nav_cols[6]:
         st.markdown(f"<div style='text-align:right; padding-top:6px;'><span class='pill-admin'>ADMIN: {st.session_state.admin_username}</span></div>", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1108,5 +1108,84 @@ elif st.session_state.portal_view == "admin":
                     mime="application/pdf",
                     use_container_width=True
                 )
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB: VIDEO VLOG PROCESSING
+    # ═══════════════════════════════════════════════════════════════════════
+    elif st.session_state.admin_tab == "video":
+        st.markdown('<div class="section-head" style="font-size:28px; font-weight:800; color:#f8fafc;">🎞️ Vlog Data Processing</div>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:15px; color:#94a3b8; margin-bottom:32px;">Upload a vlog or dashcam video. The system will divide it into frames, analyze it with the YOLO model, and simulate GPS coordinates for any detected defects.</p>', unsafe_allow_html=True)
+        
+        uploaded_video = st.file_uploader("Upload Video File (.mp4, .mov)", type=["mp4", "mov", "avi"])
+        
+        if uploaded_video is not None:
+            if st.button("🚀 Process Video", type="primary"):
+                with st.spinner("Dividing video into frames and analyzing with YOLOv8..."):
+                    import tempfile
+                    tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                    tfile.write(uploaded_video.read())
+                    tfile.flush()
+                    tfile.close()
+                    
+                    cap = cv2.VideoCapture(tfile.name)
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    if fps <= 0 or np.isnan(fps): 
+                        fps = 30.0
+                    
+                    frame_count = 0
+                    processed_frames = []
+                    defects_found = 0
+                    
+                    # Process 1 frame every second
+                    frame_skip = int(fps) if fps > 0 else 30
+                    
+                    while cap.isOpened():
+                        ret, frame = cap.read()
+                        if not ret:
+                            break
+                            
+                        if frame_count % frame_skip == 0:
+                            vr = vision_engine.detect_defects(frame)
+                            if vr.get("defect_count", 0) > 0:
+                                defects_found += vr["defect_count"]
+                                processed_frames.append(vr)
+                        
+                        frame_count += 1
+                        
+                        # Process up to 15 seconds of video for demo purposes to prevent timeout
+                        if frame_count > fps * 15:
+                            break
+                            
+                    cap.release()
+                    try:
+                        os.unlink(tfile.name)
+                    except Exception:
+                        pass
+                    
+                    st.success("✅ The video is data divided into frames and analyzed by the model. GPS is faked right now.")
+                    
+                    st.metric("Total Real Potholes Detected", defects_found)
+                    
+                    if defects_found > 0:
+                        st.markdown("##### 📍 Extracted Defects & Simulated GPS")
+                        
+                        for i, vr in enumerate(processed_frames):
+                            # Fake GPS logic for demonstration
+                            route = np.random.choice(IITG_CAMPUS_ROUTES)
+                            fake_lat = route["center_lat"] + np.random.uniform(-0.003, 0.003)
+                            fake_lon = route["center_lon"] + np.random.uniform(-0.003, 0.003)
+                            
+                            with st.container():
+                                c1, c2 = st.columns([1, 2])
+                                with c1:
+                                    ann = cv2.cvtColor(vr["annotated_frame"], cv2.COLOR_BGR2RGB)
+                                    st.image(ann, caption=f"Defects: {vr['defect_count']} | Area: {vr['total_damage_area_sqm']:.2f} m²", use_container_width=True)
+                                with c2:
+                                    st.markdown(f"**Assigned Route:** {route['name']}")
+                                    st.markdown(f"**Simulated GPS Coordinates:** `{fake_lat:.5f}, {fake_lon:.5f}`")
+                                    st.markdown(f"**Reasoning:** Found {vr['defect_count']} defects at video timestamp ~{i}s.")
+                            st.markdown("<hr style='border-color: rgba(255,255,255,0.1);'>", unsafe_allow_html=True)
+                    else:
+                        st.info("No defects were found in this video snippet.")
 
     st.markdown('<div class="site-footer">Estates and Works Section · Indian Institute of Technology Guwahati · Assam 781039</div>', unsafe_allow_html=True)
